@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>16장 · 머신러닝과 알파 연구</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   FINDING ALPHAS · Ch16 — "Research Desk" system
+   paper / ink / tape + market duotone (up-green · down-red)
+   signature: signal rail (overfit → optimal) with slide progress
+   ============================================================ */
+:root{
+  --paper:#F7F6F2; --plate:#FFFFFF;
+  --ink:#1B1F26; --ink2:#4A5260; --tape:#8A92A0;
+  --up:#0E7C66; --up-soft:#E3F0EC;
+  --down:#C74444; --down-soft:#F9E9E7;
+  --rule:#E4E1D8; --formulabg:#151A21;
+  --sans:'IBM Plex Sans KR',sans-serif; --mono:'IBM Plex Mono',monospace;
+}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#DEDCD5;}
+.deck-viewport{position:fixed;inset:0;overflow:hidden;}
+.deck-stage{position:absolute;left:0;top:0;width:1920px;height:1080px;overflow:hidden;transform-origin:0 0;}
+.slide{position:absolute;inset:0;width:1920px;height:1080px;overflow:hidden;box-sizing:border-box;
+  padding:52px 72px 96px;display:flex;flex-direction:column;visibility:hidden;opacity:0;
+  background:var(--paper);transition:opacity .18s ease,transform .18s ease;transform:translateY(3px);}
+.slide.active{visibility:visible;opacity:1;transform:none;}
+img{max-width:100%;max-height:100%;}
+
+/* ---- cover ---- */
+.cover{padding:0;}
+.cover .grid-bg{position:absolute;inset:0;
+  background-image:linear-gradient(var(--rule) 1px,transparent 1px),linear-gradient(90deg,var(--rule) 1px,transparent 1px);
+  background-size:96px 96px;opacity:.5;}
+.cover .inner{position:relative;height:100%;display:flex;flex-direction:column;padding:72px 96px 120px;box-sizing:border-box;}
+.cover .eyebrow{font:500 19px/1 var(--mono);color:var(--down);letter-spacing:.22em;}
+.cover h1{margin:26px 0 0;font:700 104px/1.06 var(--sans);color:var(--ink);letter-spacing:-.03em;}
+.cover .en{font:500 27px/1.3 var(--mono);color:var(--ink2);margin-top:22px;letter-spacing:.02em;}
+.cover .by{font:400 20px/1.6 var(--sans);color:var(--tape);margin-top:30px;}
+.cover .plot{flex:1;min-height:0;margin:34px -20px 0;}
+.cover .quote{border-top:1px solid var(--rule);padding-top:26px;font:500 28px/1.6 var(--sans);color:var(--ink);}
+.cover .quote b{color:var(--down);font-weight:700;}
+
+/* ---- shared header ---- */
+.hd{display:flex;align-items:baseline;gap:24px;padding-bottom:18px;border-bottom:2px solid var(--ink);margin-bottom:24px;}
+.hd .no{font:600 20px/1 var(--mono);color:var(--down);letter-spacing:.1em;}
+.hd h1{margin:0;font:700 42px/1.1 var(--sans);color:var(--ink);letter-spacing:-.02em;}
+.hd .en{font:400 16px/1 var(--mono);color:var(--tape);margin-left:auto;letter-spacing:.04em;}
+
+/* ---- body & cards ---- */
+.body{flex:1;display:grid;gap:20px;min-height:0;}
+.col{display:flex;flex-direction:column;gap:16px;min-height:0;}
+.card{background:var(--plate);border:1px solid var(--rule);border-radius:3px;padding:20px 22px;}
+.card h2{margin:0 0 12px;font:700 20px/1.25 var(--sans);color:var(--ink);display:flex;align-items:baseline;gap:10px;}
+.card h2 .tick{color:var(--down);font-family:var(--mono);font-weight:600;}
+.card h2 .sub{font:400 12.5px/1 var(--mono);color:var(--tape);margin-left:auto;letter-spacing:.06em;}
+
+/* long/short rows — market vernacular as structure */
+.row{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-radius:3px;background:transparent;
+  border-left:2px solid var(--rule);}
+.row+.row{margin-top:8px;}
+.row.long{border-left-color:var(--up);}
+.row.short{border-left-color:var(--down);}
+.row .pos{font:600 14px/1 var(--mono);flex:none;margin-top:2px;}
+.row.long .pos{color:var(--up);} .row.short .pos{color:var(--down);} .row .pos.n{color:var(--tape);}
+.row b{font:700 15.5px/1.35 var(--sans);color:var(--ink);}
+.row span{display:block;font:400 13.5px/1.5 var(--sans);color:var(--ink2);margin-top:2px;}
+
+/* formula terminal */
+.frm{background:var(--formulabg);border-radius:3px;padding:13px 16px;font:500 14.5px/1.7 var(--mono);color:#DDE3EA;}
+.frm .k{color:#7FB4A5;} .frm .c{color:#6B7684;} .frm .r{color:#E58B8B;} .frm .g{color:#8FBF9F;}
+
+/* figure plate — archival label */
+.plate{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;min-height:0;}
+.plate img{max-height:600px;border:1px solid var(--rule);padding:14px;background:#fff;box-shadow:0 10px 28px rgba(27,31,38,.10);}
+.plate .label{font:500 14px/1.5 var(--mono);color:var(--tape);letter-spacing:.08em;}
+.plate .label b{color:var(--ink);font-weight:600;}
+
+.tl{display:flex;flex-direction:column;gap:12px;}
+.tl .t{display:flex;gap:14px;align-items:flex-start;}
+.tl .yr{font:600 14px/1 var(--mono);color:var(--ink);border:1px solid var(--ink);border-radius:2px;
+  padding:6px 9px;margin-top:1px;white-space:nowrap;flex:none;}
+.tl .yr.hot{background:var(--down);border-color:var(--down);color:#fff;}
+.tl b{font:700 15.5px/1.3 var(--sans);color:var(--ink);}
+.tl span{display:block;font:400 13.5px/1.5 var(--sans);color:var(--ink2);}
+
+table.cmp{width:100%;border-collapse:collapse;font:400 13.5px/1.5 var(--sans);}
+.cmp th{font:600 13px/1.3 var(--mono);color:#fff;background:var(--formulabg);padding:9px 12px;text-align:left;letter-spacing:.04em;}
+.cmp td{padding:8px 12px;border-bottom:1px solid var(--rule);color:var(--ink2);vertical-align:top;}
+.cmp td:first-child{font-weight:700;color:var(--ink);white-space:nowrap;}
+.pos-up{color:var(--up);font-weight:700;} .pos-dn{color:var(--down);font-weight:700;}
+
+.ft{margin-top:18px;display:flex;gap:20px;align-items:stretch;}
+.takeaway{flex:1;background:var(--ink);color:var(--paper);border-radius:3px;padding:16px 24px;
+  font:500 19px/1.55 var(--sans);}
+.takeaway b{color:#F0A9A0;font-weight:700;}
+.takeaway small{display:block;font:400 13px/1.5 var(--mono);color:#9AA3AF;margin-top:5px;}
+
+/* ---- signature: signal rail (nav) ---- */
+.rail{position:absolute;left:0;right:0;bottom:0;height:64px;display:flex;align-items:center;
+  padding:0 40px;gap:24px;border-top:1px solid var(--rule);background:rgba(247,246,242,.92);z-index:9;}
+.rail .brand{font:500 13.5px/1 var(--mono);color:var(--tape);letter-spacing:.1em;white-space:nowrap;}
+.rail .sig{flex:1;height:30px;}
+.rail .sig polyline{fill:none;stroke:var(--tape);stroke-width:1.6;}
+.rail .sig .past{stroke:var(--down);stroke-width:2;}
+.rail .sig circle{fill:var(--down);}
+.rail .ctr{display:flex;gap:8px;align-items:center;font:500 14px/1 var(--mono);color:var(--ink2);white-space:nowrap;}
+.rail button{font:600 15px/1 var(--mono);background:transparent;border:1.5px solid var(--ink);border-radius:2px;
+  padding:8px 14px;cursor:pointer;color:var(--ink);transition:.12s;}
+.rail button:hover{background:var(--ink);color:var(--paper);}
+.rail button:focus-visible{outline:2px solid var(--down);outline-offset:2px;}
+.cover .rail{background:rgba(247,246,242,.96);}
+
+/* cover draw animation */
+.draw{stroke-dasharray:1400;stroke-dashoffset:1400;animation:draw 1.25s .15s cubic-bezier(.6,0,.2,1) forwards;}
+@keyframes draw{to{stroke-dashoffset:0;}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}.draw{stroke-dashoffset:0;}}
+
+@media print{
+  html,body{overflow:visible;background:#fff;}
+  .deck-stage{position:static;transform:none!important;width:1920px;}
+  .slide{position:relative;visibility:visible;opacity:1;transform:none;page-break-after:always;height:1080px;}
+  .rail{display:none;}
+}
+</style>
+</head>
+<body>
+<div class="deck-viewport"><div class="deck-stage">
+
+<!-- ============ 1 · COVER ============ -->
+<section class="slide cover">
+  <div class="grid-bg"></div>
+  <div class="inner">
+    <div class="eyebrow">FINDING ALPHAS · 2ND ED · CHAPTER 16 / 32</div>
+    <h1>머신러닝과 알파 연구</h1>
+    <div class="en">Machine Learning in Alpha Research — Michael Kozlov</div>
+    <div class="by">Part II 설계와 평가 · pp.121–126 · 한국어 발제</div>
+    <svg class="plot" viewBox="0 0 1728 420" preserveAspectRatio="none">
+      <!-- overfit (red, jagged) -->
+      <path class="draw" style="stroke:#C74444;stroke-width:2.4;fill:none;"
+        d="M40 300 C120 60, 200 360, 280 150 S 440 380, 520 110 S 680 390, 760 140 S 920 370, 1000 120 S 1160 400, 1240 160 S 1400 350, 1480 130 S 1640 380, 1690 210"/>
+      <!-- generalizing (green, smooth) -->
+      <path class="draw" style="stroke:#0E7C66;stroke-width:4;fill:none;animation-delay:.5s;"
+        d="M40 250 C 300 220, 500 300, 800 260 S 1300 180, 1690 240"/>
+      <text x="60" y="70" font-family="IBM Plex Mono" font-size="20" fill="#C74444">과적합 — 과거를 완벽히 설명</text>
+      <text x="1250" y="330" font-family="IBM Plex Mono" font-size="20" fill="#0E7C66">일반화 — 미래를 맞히는 것</text>
+    </svg>
+    <div class="quote">“과거를 완벽하게 <b>설명</b>하는 것은 중요하지 않다 — 중요한 것은 미래를 최대한 정확히 <b>예측</b>하는 것이다.”</div>
+  </div>
+  <nav class="rail"><span class="brand">FA·CH16</span>
+    <svg class="sig" viewBox="0 0 900 30" preserveAspectRatio="none"><polyline class="past" points="0,18 30,22 60,8 90,26 120,4 150,24"/><polyline points="150,24 180,10 240,20 300,6 360,22 420,12 480,24 540,8 600,20 660,14 720,22 780,10 840,18 900,16"/><circle cx="150" cy="24" r="4"/></svg>
+    <span class="ctr"><button onclick="go(-1)" aria-label="이전">←</button><span id="pg"></span><button onclick="go(1)" aria-label="다음">→</button></span>
+  </nav>
+</section>
+
+<!-- ============ 2 · 문제 유형 + 딜레마 ============ -->
+<section class="slide">
+  <header class="hd"><span class="no">16 / 06</span><h1>ML이 푸는 알파 연구의 문제들</h1><span class="en">PROBLEM TYPES &amp; THE DILEMMA</span></header>
+  <div class="body" style="grid-template-columns:1fr 1.08fr;">
+    <div class="col">
+      <div class="card" style="flex:1">
+        <h2><span class="tick">§</span>3가지 문제 유형</h2>
+        <div class="row"><span class="pos n">REG</span><div><b>회귀 Regression — Y = f(X)</b><span>양적 X로 양적 Y 추정 — <b>수익률·주가 예측</b>이 대표 사례</span></div></div>
+        <div class="row"><span class="pos n">CLS</span><div><b>분류 Classification — 질적(범주형) Y</b><span>양적 입력으로 범주 판정 — 다음 달 상승/하락 이진 예측</span></div></div>
+        <div class="row"><span class="pos n">CLU</span><div><b>군집화 Cauterization — 라벨 없는 X</b><span>비슷한 특징끼리 묶기 — 정답을 모르는 채 탐색하는 과제</span></div></div>
+        <div class="row long"><span class="pos">▲ 지도</span><div><b>정답(ground-truth) 예시로 학습</b><span>과거 정답 세트를 제공 — <b>주가 예측</b>에 적합</span></div></div>
+        <div class="row short"><span class="pos">▼ 비지도</span><div><b>정답 없이 품질 기준만으로 탐색</b><span>군집화가 여기 속함 — <b>포트폴리오 편입 종목 선정</b>이 대표 적용</span></div></div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card" style="flex:1;display:flex;flex-direction:column;">
+        <h2><span class="tick">§</span>근본 딜레마 — 복잡 vs 단순</h2>
+        <div style="display:grid;grid-template-columns:1fr 36px 1fr;gap:8px;align-items:stretch;margin:2px 0 18px;">
+          <div style="background:var(--down-soft);border-radius:3px;padding:14px;text-align:center;">
+            <b style="font:700 17px/1.3 var(--sans);color:var(--down);">지나치게 복잡한 모델</b>
+            <div style="font:400 13.5px/1.55 var(--sans);color:var(--ink2);margin-top:6px;">표본에 완벽 적합(calibration)<br>→ <b>과적합</b> · 새 데이터 예측 악화</div></div>
+          <div style="font:500 20px/1 var(--mono);color:var(--tape);align-self:center;text-align:center;">vs</div>
+          <div style="background:var(--up-soft);border-radius:3px;padding:14px;text-align:center;">
+            <b style="font:700 17px/1.3 var(--sans);color:var(--up);">지나치게 단순한 모델</b>
+            <div style="font:400 13.5px/1.55 var(--sans);color:var(--ink2);margin-top:6px;">적합 자체가 불량<br>→ <b>과소적합</b> · 예측 정확도 제로</div></div>
+        </div>
+        <h2><span class="tick">§</span>역사</h2>
+        <div class="tl">
+          <div class="t"><span class="yr">2차대전 후</span><div><b>정보 분석 수요 폭발</b><span>인간의 상식·계산력으로 감당 불가한 데이터 — ML 과학의 촉매</span></div></div>
+          <div class="t"><span class="yr hot">1957</span><div><b>퍼셉트론 — Rosenblatt (Cornell)</b><span>인공뉴런 = 최소의 선형 분류기 · 뉴런들의 집합. 매개변수 과다 → 과적합 위험 내재</span></div></div>
+          <div class="t"><span class="yr">1960s</span><div><b>일반화 초상화 → SVM — Vapnik &amp; Chervonenkis</b><span>훈련 정확도가 표본 밖에서 보존되도록 설계 — 과적합 방지를 구조에 내장</span></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <nav class="rail"><span class="brand">FA·CH16</span>
+    <svg class="sig" viewBox="0 0 900 30" preserveAspectRatio="none"><polyline class="past" points="0,18 30,22 60,8 90,26"/><polyline points="90,26 120,4 150,24 180,10 240,20 300,6 360,22 420,12 480,24 540,8 600,20 660,14 720,22 780,10 840,18 900,16"/><circle cx="90" cy="26" r="4"/></svg>
+    <span class="ctr"><button onclick="go(-1)">←</button><span id="pg"></span><button onclick="go(1)">→</button></span>
+  </nav>
+</section>
+
+<!-- ============ 3 · FIGURE 16.1 ============ -->
+<section class="slide">
+  <header class="hd"><span class="no">16 / 06</span><h1>머신러닝 방법의 계보</h1><span class="en">FIGURE 16.1 · REDRAWN</span></header>
+  <div class="body" style="grid-template-columns:1.1fr 1fr;">
+    <div class="col">
+      <div class="card plate" style="flex:1">
+        <img src="../img/ch16_fig16_1.png" alt="원서 Figure 16.1 스캔">
+        <div class="label"><b>FIG 16.1</b> · 원서 p.123 스캔 — The most developed directions of ML · <b>black = 가장 대중적</b></div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card" style="flex:1;display:flex;flex-direction:column;">
+        <h2><span class="tick">§</span>한글 재구성<span class="sub">SAME TREE · KR</span></h2>
+        <svg viewBox="0 0 560 520" style="flex:1;">
+          <rect x="210" y="4" width="140" height="38" rx="2" fill="#1B1F26"/>
+          <text x="280" y="29" text-anchor="middle" fill="#F7F6F2" font-family="IBM Plex Sans KR" font-weight="700" font-size="17">머신러닝</text>
+          <rect x="30" y="84" width="132" height="34" rx="2" fill="#1B1F26"/>
+          <text x="96" y="107" text-anchor="middle" fill="#F7F6F2" font-family="IBM Plex Sans KR" font-weight="700" font-size="15">지도 방법</text>
+          <rect x="214" y="84" width="132" height="34" rx="2" fill="#8A92A0"/>
+          <text x="280" y="107" text-anchor="middle" fill="#fff" font-family="IBM Plex Sans KR" font-weight="700" font-size="15">비지도 방법</text>
+          <rect x="398" y="84" width="132" height="34" rx="2" fill="#8A92A0"/>
+          <text x="464" y="107" text-anchor="middle" fill="#fff" font-family="IBM Plex Sans KR" font-weight="700" font-size="15">퍼지 논리</text>
+          <path d="M280 42 V62 H96 V84 M280 42 V62 H280 V84 M280 42 V62 H464 V84" fill="none" stroke="#B9BDC6" stroke-width="2"/>
+          <!-- popular = ink; else outline -->
+          <rect x="14" y="160" width="106" height="32" rx="2" fill="#1B1F26"/>
+          <text x="67" y="182" text-anchor="middle" fill="#fff" font-family="IBM Plex Sans KR" font-weight="700" font-size="14">통계 모형</text>
+          <rect x="130" y="160" width="106" height="32" rx="2" fill="#1B1F26"/>
+          <text x="183" y="182" text-anchor="middle" fill="#fff" font-family="IBM Plex Sans KR" font-weight="700" font-size="14">SVM</text>
+          <rect x="14" y="212" width="106" height="32" rx="2" fill="#1B1F26"/>
+          <text x="67" y="234" text-anchor="middle" fill="#fff" font-family="IBM Plex Sans KR" font-weight="700" font-size="14">신경망</text>
+          <rect x="130" y="212" width="106" height="32" rx="2" fill="#1B1F26"/>
+          <text x="183" y="234" text-anchor="middle" fill="#fff" font-family="IBM Plex Sans KR" font-weight="700" font-size="14">앙상블</text>
+          <path d="M96 118 V138 H67 V160 M96 118 V138 H183 V160 M96 118 V138 H67 V212 M96 118 V138 H183 V212" fill="none" stroke="#B9BDC6" stroke-width="2"/>
+          <text x="17" y="266" font-family="IBM Plex Mono" font-size="12.5" fill="#4A5260">랜덤포레스트</text>
+          <text x="133" y="266" font-family="IBM Plex Mono" font-size="12.5" fill="#4A5260">AdaBoost</text>
+          <rect x="214" y="160" width="132" height="32" rx="2" fill="none" stroke="#8A92A0" stroke-width="1.6"/>
+          <text x="280" y="182" text-anchor="middle" font-family="IBM Plex Sans KR" font-weight="700" font-size="14" fill="#4A5260">군집화 알고리즘</text>
+          <path d="M280 118 V160" fill="none" stroke="#B9BDC6" stroke-width="2"/>
+          <rect x="382" y="160" width="148" height="84" rx="2" fill="#C74444"/>
+          <text x="456" y="192" text-anchor="middle" fill="#fff" font-family="IBM Plex Sans KR" font-weight="700" font-size="16">딥러닝</text>
+          <text x="456" y="218" text-anchor="middle" fill="#F3D3D1" font-family="IBM Plex Mono" font-size="11.5">RBM · RNN · CNN</text>
+          <path d="M280 118 V138 H456 V160" fill="none" stroke="#B9BDC6" stroke-width="2" stroke-dasharray="5 4"/>
+          <path d="M183 244 V252 H456 V244" fill="none" stroke="#B9BDC6" stroke-width="2" stroke-dasharray="5 4"/>
+          <text x="14" y="308" font-family="IBM Plex Sans KR" font-weight="700" font-size="14.5" fill="#1B1F26">읽는 법</text>
+          <text x="14" y="336" font-family="IBM Plex Sans KR" font-size="13.5" fill="#4A5260">· <tspan fill="#1B1F26" font-weight="700">짙은 색 = 원서가 표시한 “가장 대중적” 방향</tspan></text>
+          <text x="14" y="362" font-family="IBM Plex Sans KR" font-size="13.5" fill="#4A5260">· 지도 = 정답 있는 학습 · 비지도 = 정답 없는 탐색(군집화)</text>
+          <text x="14" y="388" font-family="IBM Plex Sans KR" font-size="13.5" fill="#4A5260">· 퍼지 논리 = 예·아니오 사이 회색조 추론의 독립 축</text>
+          <text x="14" y="414" font-family="IBM Plex Sans KR" font-size="13.5" fill="#4A5260">· 딥러닝은 신경망에서 갈라져 나온 최근 대세 — 점선</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+  <nav class="rail"><span class="brand">FA·CH16</span>
+    <svg class="sig" viewBox="0 0 900 30" preserveAspectRatio="none"><polyline class="past" points="0,18 30,22 60,8 90,26 120,4 150,24"/><polyline points="150,24 180,10 240,20 300,6 360,22 420,12 480,24 540,8 600,20 660,14 720,22 780,10 840,18 900,16"/><circle cx="150" cy="24" r="4"/></svg>
+    <span class="ctr"><button onclick="go(-1)">←</button><span id="pg"></span><button onclick="go(1)">→</button></span>
+  </nav>
+</section>
+
+<!-- ============ 4 · 통계모형 + SVM ============ -->
+<section class="slide">
+  <header class="hd"><span class="no">16 / 06</span><h1>통계 모형과 SVM</h1><span class="en">STATISTICAL MODELS · SVM</span></header>
+  <div class="body" style="grid-template-columns:1fr 1.12fr;">
+    <div class="col">
+      <div class="card">
+        <h2><span class="tick">§</span>통계 모형<span class="sub">BAYES · LDA · HMM · LOGISTIC</span></h2>
+        <div class="row long"><span class="pos">▲ 강점</span><div><b>단순 문제에 유용 · 구현 쉬움 · 결측치에 둔감</b><span>고정밀 분류·예측이 꼭 필요 없는 과제에 적합</span></div></div>
+        <div class="row short"><span class="pos">▼ 약점</span><div><b>각 방법이 특정 데이터 모형을 가정</b><span>가정이 어긋나면 성능 급락</span></div></div>
+        <div class="row"><span class="pos n">HMM</span><div><b>은닉 마르코프 모형 — 추세 분석의 대표 응용</b><span>① 은닉 마르코프 연쇄(시간 변동) + ② 관측 과정(스펙트럼 변동) 합성. 관측 序列 → 은닉 상태 복원 → 장기분포 대비 <b>현재 추세 위치 판별</b></span></div></div>
+      </div>
+      <div class="card" style="flex:1">
+        <h2><span class="tick">§</span>SVM/SVR을 알파에 쓰는 법</h2>
+        <div class="row"><span class="pos n">SVR</span><div><b>서포트 벡터 회귀로 수익률 예측</b><span>마진 폭 조절로 금융 데이터의 <b>변동성 변화 모사</b></span></div></div>
+        <div class="row long"><span class="pos">▲ 비대칭</span><div><b>비대칭 마진 → 다운사이드 리스크 축소</b><span>상·하방 마진을 다르게 잡아 하방 오차에 더 민감하게 학습</span></div></div>
+        <div class="row short"><span class="pos">▼ 단점</span><div><b>학습 시간 과다 · 병렬 컴퓨팅 부적합</b><span>현대 대규모 알고리즘에는 발목</span></div></div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card" style="flex:1;display:flex;flex-direction:column;">
+        <h2><span class="tick">§</span>마진 최대화 — 구조적 위험 최소화</h2>
+        <div class="frm">
+R(θ) <span class="c">=</span> R<span class="k">_emp</span>(θ) <span class="c">+</span> <span class="r">λ</span> · R<span class="k">_reg</span>(θ)<br>
+<span class="c"># 경험적 오차(훈련 적합도) + 정규화 항(복잡도 통제)</span><br>
+<span class="c"># 퍼셉트론 — 앞 항만 최소화 → 과적합</span><br>
+<span class="c"># SVM — 뒷 항이 표본 밖 보존을 담보</span>
+        </div>
+        <svg viewBox="0 0 640 316" style="flex:1;margin-top:12px;">
+          <rect x="0" y="0" width="640" height="316" fill="#FFFFFF" stroke="#E4E1D8"/>
+          <line x1="110" y1="36" x2="440" y2="278" stroke="#1B1F26" stroke-width="3.4"/>
+          <line x1="40" y1="74" x2="352" y2="304" stroke="#C74444" stroke-width="1.7" stroke-dasharray="7 6"/>
+          <line x1="200" y1="8" x2="520" y2="254" stroke="#C74444" stroke-width="1.7" stroke-dasharray="7 6"/>
+          <circle cx="105" cy="99" r="10" fill="#C74444"/><circle cx="160" cy="152" r="10" fill="#C74444"/><circle cx="85" cy="172" r="10" fill="#C74444"/>
+          <circle cx="150" cy="66" r="10" fill="none" stroke="#C74444" stroke-width="2"/><circle cx="60" cy="128" r="10" fill="none" stroke="#C74444" stroke-width="2"/>
+          <rect x="380" y="66" width="21" height="21" fill="#0E7C66"/>
+          <rect x="465" y="124" width="21" height="21" fill="#0E7C66"/>
+          <rect x="410" y="200" width="21" height="21" fill="#0E7C66"/>
+          <rect x="520" y="56" width="21" height="21" fill="none" stroke="#0E7C66" stroke-width="2"/>
+          <rect x="520" y="212" width="21" height="21" fill="none" stroke="#0E7C66" stroke-width="2"/>
+          <path d="M214 208 L262 254" stroke="#1B1F26" stroke-width="2.4"/>
+          <path d="M206 200 l14 4 -6 10 z" fill="#1B1F26"/>
+          <text x="274" y="250" font-family="IBM Plex Sans KR" font-weight="700" font-size="15.5" fill="#1B1F26">마진(여백) 최대화</text>
+          <text x="120" y="302" font-family="IBM Plex Mono" font-size="12.5" fill="#C74444">● support vectors — 경계 근접 점만이 경계를 결정</text>
+          <text x="428" y="42" font-family="IBM Plex Mono" font-size="12.5" fill="#0E7C66">new → map → assign</text>
+        </svg>
+        <div style="font:400 13.5px/1.55 var(--sans);color:var(--ink2);margin-top:8px">
+            두 범주가 겹치지 않는 공간에서 <b>훈련 점과 경계 사이 거리를 최대화</b>하는 초평면. 견고한 이론 기반과 다양한 변형이 강점.
+        </div>
+      </div>
+    </div>
+  </div>
+  <nav class="rail"><span class="brand">FA·CH16</span>
+    <svg class="sig" viewBox="0 0 900 30" preserveAspectRatio="none"><polyline class="past" points="0,18 30,22 60,8 90,26 120,4 180,12"/><polyline points="180,12 240,20 300,6 360,22 420,12 480,24 540,8 600,20 660,14 720,22 780,10 840,18 900,16"/><circle cx="180" cy="12" r="4"/></svg>
+    <span class="ctr"><button onclick="go(-1)">←</button><span id="pg"></span><button onclick="go(1)">→</button></span>
+  </nav>
+</section>
+
+<!-- ============ 5 · NN · 앙상블 · DL · 퍼지 ============ -->
+<section class="slide">
+  <header class="hd"><span class="no">16 / 06</span><h1>신경망 · 앙상블 · 딥러닝 · 퍼지 논리</h1><span class="en">NN · ENSEMBLE · DL · FUZZY</span></header>
+  <div class="body" style="grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;">
+    <div class="card">
+      <h2><span class="tick">§</span>신경망 NN<span class="sub">NEURAL NETS</span></h2>
+      <div class="row"><span class="pos n">본질</span><div><b>알고리즘이 아니라 “알고리즘을 표현하는 방식”</b><span>뉴런 구조가 아니라 <b>연결 구조와 학습법</b>이 핵심 — 임의 과제용 설계 이론은 아직 없음</span></div></div>
+      <div class="row long"><span class="pos">▲ 학습</span><div><b>역전파(backpropagation)</b><span>충분한 컴퓨팅 파워만 있으면 매우 효율적 — 체스·바둑·신용등급·사기탐지</span></div></div>
+      <div class="row short"><span class="pos">▼ 한계</span><div><b>이론 부재 · 내부 불투명(블랙박스)</b><span>내부 논리 해석이 어려워 발목</span></div></div>
+    </div>
+    <div class="card">
+      <h2><span class="tick">§</span>앙상블<span class="sub">RANDOM FOREST · ADABOOST</span></h2>
+      <div class="row"><span class="pos n">원리</span><div><b>약한(weak) 분류기·예측기 다수를 결합</b><span>더 강한 분류·더 정밀한 예측 획득</span></div></div>
+      <div class="row"><span class="pos n">RF</span><div><b>랜덤포레스트 = 트리들의 투표</b><span>단순 결정트리 다수 생성 → 새 사례에 <b>투표</b>로 최종 판정</span></div></div>
+      <div class="row"><span class="pos n">BOOST</span><div><b>AdaBoost = 정확도 &gt;50% 약분류기의 가중 결합</b><span>Real AdaBoost는 역추적으로 불리한 약분류기 제거 — 오류율↓·특징집합↓, 학습시간 약 5배</span></div></div>
+    </div>
+    <div class="card">
+      <h2><span class="tick">§</span>딥러닝<span class="sub">DEEP LEARNING</span></h2>
+      <div class="row"><span class="pos n">어원</span><div><b>Hinton의 RBM(제한 볼츠만 머신)</b><span>다층 NN 사전학습용 비지도 방법 — 역전파 개선편이라는 강증거는 없음</span></div></div>
+      <div class="row short"><span class="pos">▼ RNN</span><div><b>기울기 소실 문제</b><span>단계별 가중치 변화가 너무 작아지거나 커져 학습 불안정 — 자연어 처리 계열</span></div></div>
+      <div class="row long"><span class="pos">▲ CNN</span><div><b>합성곱 신경망 — 요즘 “딥러닝”의 대명사</b><span>후쿠시마(neocognitron) + LeCun(역전파 변형) · 학습 리소스는 많이 필요하나 <b>병렬화 유리</b> · 시계열 최고 성적은 DBN(Kuremoto 2014)</span></div></div>
+    </div>
+    <div class="card">
+      <h2><span class="tick">§</span>퍼지 논리<span class="sub">FUZZY LOGIC</span></h2>
+      <div class="row"><span class="pos n">개념</span><div><b>예/아니오 이분법 사이 “회색조” 허용</b><span>“아마 참”·“불확정” — 부분 정의 명제로 추론</span></div></div>
+      <div class="row long"><span class="pos">▲ 강점</span><div><b>정보 부족 상태의 의사결정 기제</b><span>불명확한 추론 규칙 내장</span></div></div>
+      <div class="row"><span class="pos n">확장</span><div><b>퍼지 전문가 시스템 · 하이브리드 NN</b><span>신념도(degree of belief)에 따라 다양한 응답 — 금융 과정·시장 모형 연구로 관심 확대</span></div></div>
+    </div>
+  </div>
+  <nav class="rail"><span class="brand">FA·CH16</span>
+    <svg class="sig" viewBox="0 0 900 30" preserveAspectRatio="none"><polyline class="past" points="0,18 30,22 60,8 90,26 120,4 150,24 210,14"/><polyline points="210,14 240,20 300,6 360,22 420,12 480,24 540,8 600,20 660,14 720,22 780,10 840,18 900,16"/><circle cx="210" cy="14" r="4"/></svg>
+    <span class="ctr"><button onclick="go(-1)">←</button><span id="pg"></span><button onclick="go(1)">→</button></span>
+  </nav>
+</section>
+
+<!-- ============ 6 · 결론 ============ -->
+<section class="slide">
+  <header class="hd"><span class="no">16 / 06</span><h1>정리 — 왜 ML 없이는 안 되는가</h1><span class="en">CONCLUSION</span></header>
+  <div class="body" style="grid-template-columns:1.14fr 1fr;">
+    <div class="col">
+      <div class="card" style="flex:1">
+        <h2><span class="tick">§</span>장의 논리 흐름</h2>
+        <div class="tl">
+          <div class="t"><span class="yr">문제</span><div><b>알파 연구의 본질 = 미래 예측</b><span>과거 설명이 아닌 예측 정확도가 목표 — 복잡 vs 단순 딜레마에서 출발</span></div></div>
+          <div class="t"><span class="yr">지도표</span><div><b>Figure 16.1 계보</b><span>지도(통계·SVM·신경망·앙상블) / 비지도(군집화) / 퍼지 논리 / 딥러닝</span></div></div>
+          <div class="t"><span class="yr">선택</span><div><b>과제 특성에 맞는 도구 선택</b><span>추세판별 HMM · 과적합 걱정 SVM/SVR · 표본 밖 성능 앙상블 · 대규모 병렬 CNN·DBN · 불확실성 퍼지</span></div></div>
+          <div class="t"><span class="yr hot">결론</span><div><b>ML은 선택이 아니라 필수 인프라</b><span>이용 가능한 데이터 전체를 ML 없이 알파 구축에 소화하는 것은 불가능</span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card">
+        <h2><span class="tick">§</span>투자 에이전트 관점의 함의</h2>
+        <div class="row long"><span class="pos">▲ 1</span><div><b>예측기 파이프라인</b><span>회귀(수익률 크기)·분류(방향)·군집(유니버스 선정)을 알파 생성기의 서로 다른 슬롯으로</span></div></div>
+        <div class="row long"><span class="pos">▲ 2</span><div><b>SVR 비대칭 마진</b><span>손실 회피 성향을 목적함수에 직접 반영 — 리스크 관리와 예측의 일체화</span></div></div>
+        <div class="row long"><span class="pos">▲ 3</span><div><b>HMM 레짐 탐지</b><span>관측 序列로 시장 국면을 상태 변수화 — 알파의 상황별 게이팅</span></div></div>
+      </div>
+      <div class="card">
+        <h2><span class="tick">§</span>비판적 시각</h2>
+        <div class="row short"><span class="pos">▼ ①</span><div><b>“과거 정답”의 안정성 가정</b><span>지도학습 라벨이 내일도 같은 의미라는 가정 — 레짐 변화에 취약</span></div></div>
+        <div class="row short"><span class="pos">▼ ②</span><div><b>블랙박스 vs 해석가능성</b><span>책도 NN 불투명성 인정 — 규제·리스크 관리상 해석 가능 모형이 요구되는 경우 많음</span></div></div>
+        <div class="row short"><span class="pos">▼ ③</span><div><b>2019년 시점의 시야</b><span>CNN·DBN이 최전선 — 이후 트랜스포머 계열 등장으로 실무 최전선은 이동</span></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="ft">
+    <div class="takeaway">데이터는 현대 디지털 세계의 가장 귀중한 자원 — 그 전부를 활용하려면 <b>머신러닝이 필수</b>다.
+      <small>WWII 후 수요 폭발 → 1957 퍼셉트론 → 1960s SVM → 앙상블·딥러닝의 시대</small></div>
+  </div>
+  <nav class="rail"><span class="brand">FA·CH16</span>
+    <svg class="sig" viewBox="0 0 900 30" preserveAspectRatio="none"><polyline class="past" points="0,18 30,22 60,8 90,26 120,4 150,24 180,10 240,20 300,14"/><polyline points="300,14 360,22 420,12 480,24 540,8 600,20 660,14 720,22 780,10 840,18 900,16" stroke-dasharray="3 4"/><circle cx="300" cy="14" r="4"/></svg>
+    <span class="ctr"><button onclick="go(-1)">←</button><span id="pg"></span><button onclick="go(1)">→</button></span>
+  </nav>
+</section>
+
+</div></div>
+<script>
+(function(){
+  var slides=[].slice.call(document.querySelectorAll('.slide')),cur=0;
+  function show(i){
+    cur=Math.max(0,Math.min(slides.length-1,i));
+    slides.forEach(function(s,k){s.classList.toggle('active',k===cur);});
+    [].forEach.call(document.querySelectorAll('#pg'),function(p){p.textContent=(cur+1)+' / '+slides.length;});
+  }
+  window.go=function(d){show(cur+d);};
+  addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown')go(1);
+    if(e.key==='ArrowLeft'||e.key==='PageUp')go(-1);
+  });
+  var st=document.querySelector('.deck-stage');
+  function fit(){st.style.transform='scale('+Math.min(innerWidth/1920,innerHeight/1080)+')';}
+  addEventListener('resize',fit);fit();show(0);
+})();
+</script>
+</body>
+</html>
